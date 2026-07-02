@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import platform
 import re
@@ -15,54 +14,20 @@ import time
 import uuid
 from pathlib import Path
 from typing import Any
-from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
 
-from worker.paths import REPO_ROOT, RUNTIME_DIR, SHUTUP_ROOT
+from worker.bootstrap import ensure_training_bundle, training_root
+from worker.client import CoordinatorClient
+from worker.paths import REPO_ROOT, RUNTIME_DIR
 
 ROOT = REPO_ROOT
 RUNTIME = RUNTIME_DIR
 RUNTIME.mkdir(parents=True, exist_ok=True)
 WORKER_ID_FILE = RUNTIME / "worker-id"
-WORKER_RUNTIME_VERSION = "2026-07-02-worker-standalone"
+WORKER_RUNTIME_VERSION = "2026-07-03-remote-bundle"
 STOP_REQUESTED = threading.Event()
 PROCESS_LOCK = threading.Lock()
 CURRENT_PROCESS: subprocess.Popen[str] | None = None
 IS_WINDOWS = sys.platform == "win32"
-
-
-class CoordinatorClient:
-    def __init__(self, base_url: str, token: str) -> None:
-        self.base_url = base_url.rstrip("/")
-        self.token = token
-
-    def request(self, method: str, path: str, payload: dict[str, Any] | None = None) -> Any:
-        data = None if payload is None else json.dumps(payload).encode("utf-8")
-        request = Request(
-            f"{self.base_url}{path}",
-            data=data,
-            method=method,
-            headers={
-                "Authorization": f"Bearer {self.token}",
-                "Content-Type": "application/json",
-                "User-Agent": "bkg-bittts-worker/0.5",
-            },
-        )
-        try:
-            with urlopen(request, timeout=60) as response:
-                raw = response.read()
-                return json.loads(raw.decode("utf-8")) if raw else None
-        except HTTPError as error:
-            body = error.read().decode("utf-8", errors="replace")
-            if error.code == 401:
-                raise RuntimeError(
-                    "Koordinator HTTP 401: Worker-Token ungültig. "
-                    "Token in https://train.eysho.info/ui erzeugen und in .env setzen. "
-                    f"Detail: {body}"
-                ) from error
-            raise RuntimeError(f"Koordinator HTTP {error.code}: {body}") from error
-        except URLError as error:
-            raise RuntimeError(f"Koordinator nicht erreichbar: {error}") from error
 
 
 def terminate_process(process: subprocess.Popen[str], timeout: int = 20) -> None:
@@ -180,7 +145,7 @@ def bash_runner() -> list[str]:
         return ["wsl", "bash"]
     raise RuntimeError(
         "Unter Windows wird bash oder WSL benötigt (Git Bash / WSL). "
-        "Trainingsskripte liegen in bkg-bittts-shutup."
+        "Trainingsskripte kommen per Remote-Bootstrap vom Koordinator."
     )
 
 
@@ -194,10 +159,11 @@ def job_command(job: dict[str, Any]) -> tuple[list[str], dict[str, str]]:
     action = str(job["action"])
     payload = job.get("payload") or {}
     profile = str(payload.get("dataset_profile") or "mls-german")
+    bundle_root = training_root()
     if profile == "mls-german":
-        script = SHUTUP_ROOT / "scripts" / "mls-voice-trainer.sh"
+        script = bundle_root / "scripts" / "mls-voice-trainer.sh"
     elif profile == "thorsten-legacy":
-        script = SHUTUP_ROOT / "scripts" / "translate-voice-trainer.sh"
+        script = bundle_root / "scripts" / "translate-voice-trainer.sh"
     else:
         raise ValueError(f"Unbekanntes Dataset-Profil: {profile}")
 
@@ -228,9 +194,17 @@ def job_command(job: dict[str, Any]) -> tuple[list[str], dict[str, str]]:
             payload.get("dataset_id") or "facebook/multilingual_librispeech"
         )
         env["BITTTS_DATASET_CONFIG"] = str(payload.get("dataset_config") or "german")
-        env["BITTTS_DATASET_SPLIT"] = str(payload.get("split") or "1_hours")
+        env["BITTTS_DATASET_SPLIT"] = str(
+            payload.get("split")
+            or os.environ.get("BITTTS_DATASET_SPLIT")
+            or "9_hours"
+        )
         env["BITTTS_SPEAKER_ID"] = speaker_id
-        env["BITTTS_MAX_HOURS"] = str(payload.get("max_hours") or 1.0)
+        env["BITTTS_MAX_HOURS"] = str(
+            payload.get("max_hours")
+            or os.environ.get("BITTTS_MAX_HOURS")
+            or 9.0
+        )
         env["BITTTS_SCAN_ROWS"] = str(payload.get("scan_rows") or 5000)
     else:
         env["BITTTS_THORSTEN_DIR"] = env["BITTTS_WORKER_DATASET"]
@@ -271,7 +245,7 @@ def execute_job(
         {"worker_id": current_worker_id, "text": f"$ {' '.join(command)}\n"},
     )
     popen_kwargs: dict[str, Any] = {
-        "cwd": SHUTUP_ROOT,
+        "cwd": training_root(),
         "env": env,
         "text": True,
         "stdout": subprocess.PIPE,
@@ -347,10 +321,9 @@ def run_worker(once: bool = False) -> int:
         raise RuntimeError("BITTTS_COORDINATOR_URL fehlt.")
     if len(token) < 24:
         raise RuntimeError("BITTTS_WORKER_TOKEN fehlt oder ist zu kurz.")
-    if not SHUTUP_ROOT.is_dir():
-        raise RuntimeError(
-            f"BITTTS_SHUTUP_ROOT fehlt oder ist kein Ordner: {SHUTUP_ROOT}"
-        )
+
+    bundle_root = ensure_training_bundle(coordinator_url, token)
+    print(f"Training-Bundle: {bundle_root}", flush=True)
 
     current_worker_id = worker_id()
     name = os.environ.get("BITTTS_WORKER_NAME", "").strip() or socket.gethostname()
@@ -378,7 +351,6 @@ def run_worker(once: bool = False) -> int:
     print(f"Worker registriert: {name} ({current_worker_id})", flush=True)
     print(f"Worker-Runtime: {WORKER_RUNTIME_VERSION}", flush=True)
     print(f"Koordinator: {coordinator_url}", flush=True)
-    print(f"Shutup-Repo: {SHUTUP_ROOT}", flush=True)
     print(f"GPU: {gpu_name}", flush=True)
 
     while not STOP_REQUESTED.is_set():

@@ -16,7 +16,7 @@ command -v python3 >/dev/null || fail "python3 fehlt"
 if [[ ! -f "$ENV_FILE" ]]; then
   cp "$ROOT/.env.example" "$ENV_FILE"
   chmod 600 "$ENV_FILE"
-  echo "[BitTTS Worker] .env erstellt — Token und BITTTS_SHUTUP_ROOT eintragen."
+  echo "[BitTTS Worker] .env erstellt — BITTTS_WORKER_TOKEN eintragen."
 fi
 
 mkdir -p "$RUNTIME_DIR"
@@ -35,8 +35,8 @@ set -a
 source "$ENV_FILE"
 set +a
 
-if [[ -z "${BITTTS_SHUTUP_ROOT:-}" || ! -d "$BITTTS_SHUTUP_ROOT" ]]; then
-  echo "[BitTTS Worker] Warnung: BITTTS_SHUTUP_ROOT fehlt in .env"
+if [[ -n "${BITTTS_SHUTUP_ROOT:-}" && ! -d "$BITTTS_SHUTUP_ROOT" ]]; then
+  echo "[BitTTS Worker] Warnung: BITTTS_SHUTUP_ROOT gesetzt, Ordner fehlt."
 fi
 
 echo "[BitTTS Worker] Install fertig."

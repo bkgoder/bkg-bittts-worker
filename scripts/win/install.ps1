@@ -20,7 +20,7 @@ Write-Host "Python: $python" -ForegroundColor Green
 
 if (-not (Test-Path $EnvFile)) {
     Copy-Item (Join-Path $Root ".env.example") $EnvFile
-    Write-Host ".env erstellt — BITTTS_WORKER_TOKEN und BITTTS_SHUTUP_ROOT eintragen." -ForegroundColor Yellow
+    Write-Host ".env erstellt — BITTTS_WORKER_TOKEN eintragen." -ForegroundColor Yellow
 }
 
 New-Item -ItemType Directory -Force -Path $RuntimeDir | Out-Null
@@ -35,11 +35,8 @@ $venvPython = Join-Path $VenvDir "Scripts\python.exe"
 & $venvPython -m pip install -e $Root
 
 $shutup = (Import-DotEnv $EnvFile)["BITTTS_SHUTUP_ROOT"]
-if (-not $shutup -or -not (Test-Path $shutup)) {
-    Write-Host ""
-    Write-Host "BITTTS_SHUTUP_ROOT fehlt in .env oder Ordner existiert nicht." -ForegroundColor Yellow
-    Write-Host "Beispiel: BITTTS_SHUTUP_ROOT=C:\src\bkg-bittts-shutup"
-    Write-Host "Oder WSL-Pfad wenn Training über WSL/bash läuft."
+if ($shutup -and -not (Test-Path $shutup)) {
+    Write-Host "Warnung: BITTTS_SHUTUP_ROOT gesetzt, Ordner fehlt — sonst Remote-Bundle." -ForegroundColor Yellow
 }
 
 Write-Host ""

@@ -1,6 +1,6 @@
 # bkg-bittts-worker
 
-GPU-Worker für [BKG BitTTS Trainer](https://github.com/bkgoder/bkg-bittts-trainer) — verbindet sich mit `https://train.eysho.info`, übernimmt Jobs und führt Trainingsskripte aus **bkg-bittts-shutup** aus.
+GPU-Worker für [BKG BitTTS Trainer](https://github.com/bkgoder/bkg-bittts-trainer) — verbindet sich mit `https://train.eysho.info`, lädt Trainingsskripte automatisch per Bootstrap und führt Jobs aus.
 
 ## Repos
 
@@ -8,21 +8,21 @@ GPU-Worker für [BKG BitTTS Trainer](https://github.com/bkgoder/bkg-bittts-train
 |------|--------|
 | **bkg-bittts-trainer** | Koordinator + Web-UI |
 | **bkg-bittts-worker** (dieses) | Worker-Client |
-| **bkg-bittts-shutup** | Trainingsskripte, Modelle |
+| **bkg-bittts-shutup** | Trainingsskripte (vom Koordinator als ZIP) |
+
+**Kein separates shutup-Clone nötig** — der Worker holt `mls-voice-trainer.sh` inkl. Upstream-Patches (scipy, monotonic_align, Colab-Buckets) vom Koordinator.
 
 ## Windows (PowerShell)
 
 Voraussetzungen:
-- **Python 3.10+** (Microsoft Store, `winget install Python.Python.3.12`, oder python.org)
-- **bkg-bittts-shutup** geklont
+- **Python 3.10+**
+- **Git Bash** oder **WSL** (`bash` im PATH)
 - Worker-Token aus https://train.eysho.info/ui
 
 ```powershell
 git clone https://github.com/bkgoder/bkg-bittts-worker.git
 cd bkg-bittts-worker
-
-# .env bearbeiten: BITTTS_WORKER_TOKEN, BITTTS_SHUTUP_ROOT
-notepad .env
+cp .env.example .env   # BITTTS_WORKER_TOKEN eintragen
 
 .\scripts\win\install.ps1
 .\scripts\win\start.ps1
@@ -31,14 +31,12 @@ notepad .env
 .\scripts\win\stop.ps1
 ```
 
-Für Trainingsskripte unter Windows: **Git Bash** oder **WSL** muss verfügbar sein (`bash` im PATH).
-
 ## Linux / WSL
 
 ```bash
 git clone https://github.com/bkgoder/bkg-bittts-worker.git
 cd bkg-bittts-worker
-cp .env.example .env   # Token + BITTTS_SHUTUP_ROOT setzen
+cp .env.example .env   # BITTTS_WORKER_TOKEN eintragen
 
 bash scripts/linux/install.sh
 bash scripts/linux/start.sh
@@ -52,7 +50,17 @@ bash scripts/linux/stop.sh
 BITTTS_COORDINATOR_URL=https://train.eysho.info
 BITTTS_WORKER_TOKEN=bttw_...
 BITTTS_WORKER_NAME=mein-pc
-BITTTS_SHUTUP_ROOT=/pfad/zu/bkg-bittts-shutup
+BITTTS_DATASET_SPLIT=9_hours
+BITTTS_MAX_HOURS=9.0
+```
+
+Optional für lokale Entwicklung: `BITTTS_SHUTUP_ROOT=/pfad/zu/bkg-bittts-shutup`
+
+Nach Koordinator-Updates Bundle erneuern:
+
+```bash
+BITTTS_BUNDLE_FORCE=1 bkg-bittts-worker --once
+# oder: rm -rf runtime/bundle
 ```
 
 ## Manuell (ohne Skripte)
@@ -66,4 +74,4 @@ bkg-bittts-worker
 
 ## Colab
 
-Notebook liegt im Trainer-Repo: `bkg-bittts-trainer/notebooks/`
+Notebook: [bkg-bittts-trainer/notebooks/](https://github.com/bkgoder/bkg-bittts-trainer/tree/main/notebooks)

@@ -12,7 +12,7 @@ $vars = Import-DotEnv $EnvFile
 Write-Host "=== BKG BitTTS Worker Status ===" -ForegroundColor Cyan
 Write-Host "Koordinator: $($vars['BITTTS_COORDINATOR_URL'])"
 Write-Host "Name:        $($vars['BITTTS_WORKER_NAME'])"
-Write-Host "Shutup:      $($vars['BITTTS_SHUTUP_ROOT'])"
+Write-Host "Shutup:      $(if ($vars['BITTTS_SHUTUP_ROOT']) { $vars['BITTTS_SHUTUP_ROOT'] } else { 'Remote-Bundle (automatisch)' })"
 
 if (Test-Path $PidFile) {
     $pidText = (Get-Content $PidFile -Raw).Trim()

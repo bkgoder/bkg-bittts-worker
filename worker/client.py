@@ -20,7 +20,7 @@ class CoordinatorClient:
             headers={
                 "Authorization": f"Bearer {self.token}",
                 "Content-Type": "application/json",
-                "User-Agent": "bkg-bittts-worker/0.5",
+                "User-Agent": "bkg-bittts-worker/0.5.1",
             },
         )
         try:
