@@ -1,0 +1,5 @@
+Metadata-Version: 2.4
+Name: bkg-bittts-worker
+Version: 0.5.0
+Summary: BKG BitTTS GPU worker client for train.eysho.info
+Requires-Python: >=3.10

@@ -1,0 +1,10 @@
+.env
+runtime/
+.venv/
+.pipx/
+.pipx-bootstrap/
+.bin/
+__pycache__/
+*.py[cod]
+worker.pid
+*.log

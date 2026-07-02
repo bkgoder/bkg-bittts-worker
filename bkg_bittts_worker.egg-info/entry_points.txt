@@ -1,0 +1,2 @@
+[console_scripts]
+bkg-bittts-worker = worker.launcher:main
