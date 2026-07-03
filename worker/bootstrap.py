@@ -107,6 +107,60 @@ def _patch_data_utils(upstream: Path) -> None:
         print("data_utils.py repariert: leere Buckets und deutsche Umlaute normalisiert.", flush=True)
 
 
+def _patch_training_configs(root: Path) -> None:
+    max_batch = int(os.environ.get("BITTTS_MAX_BATCH_SIZE", "2"))
+    max_eval_batch = int(os.environ.get("BITTTS_MAX_EVAL_BATCH_SIZE", "1"))
+    max_workers = int(os.environ.get("BITTTS_MAX_DATA_WORKERS", "2"))
+    max_segment = int(os.environ.get("BITTTS_MAX_SEGMENT_SIZE", "8192"))
+    changed_files = 0
+
+    def clamp_config(value: object) -> bool:
+        changed = False
+        if isinstance(value, dict):
+            for key, item in list(value.items()):
+                if key == "batch_size" and isinstance(item, int) and item > max_batch:
+                    value[key] = max_batch
+                    changed = True
+                elif key in {"eval_batch_size", "validation_batch_size"} and isinstance(item, int) and item > max_eval_batch:
+                    value[key] = max_eval_batch
+                    changed = True
+                elif key in {"num_workers", "n_workers"} and isinstance(item, int) and item > max_workers:
+                    value[key] = max_workers
+                    changed = True
+                elif key == "segment_size" and isinstance(item, int) and item > max_segment:
+                    value[key] = max_segment
+                    changed = True
+                else:
+                    changed = clamp_config(item) or changed
+        elif isinstance(value, list):
+            for item in value:
+                changed = clamp_config(item) or changed
+        return changed
+
+    candidates = [root / "configs", root / "logs"]
+    upstream = root / "vendor" / "MB-iSTFT-VITS"
+    candidates.extend([upstream / "configs", upstream / "logs"])
+
+    for base in candidates:
+        if not base.is_dir():
+            continue
+        for config in base.rglob("*.json"):
+            try:
+                data = json.loads(config.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            if clamp_config(data):
+                config.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+                changed_files += 1
+
+    if changed_files:
+        print(
+            f"Trainings-Configs repariert: batch_size<={max_batch}, eval_batch_size<={max_eval_batch}, "
+            f"workers<={max_workers}, segment_size<={max_segment} ({changed_files} Dateien).",
+            flush=True,
+        )
+
+
 def _ensure_monotonic_align(upstream: Path) -> None:
     package = upstream / "monotonic_align"
     init_file = package / "__init__.py"
@@ -145,13 +199,7 @@ def _ensure_monotonic_align(upstream: Path) -> None:
 
     print("Baue monotonic_align Cython-Erweiterung …", flush=True)
     subprocess.run(
-        [
-            sys.executable,
-            "setup.py",
-            "build_ext",
-            "--build-lib",
-            str(upstream),
-        ],
+        [sys.executable, "setup.py", "build_ext", "--build-lib", str(upstream)],
         cwd=package,
         check=True,
     )
@@ -170,6 +218,7 @@ def _ensure_monotonic_align(upstream: Path) -> None:
 
 def _patch_upstream_compat(root: Path) -> None:
     _patch_training_scripts(root)
+    _patch_training_configs(root)
 
     upstream = root / "vendor" / "MB-iSTFT-VITS"
     if not upstream.is_dir():
