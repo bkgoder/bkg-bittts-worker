@@ -52,17 +52,21 @@ export PIP_ROOT_USER_ACTION=ignore
 
 # shellcheck disable=SC1091
 source "$VENV_DIR/bin/activate"
-current_hash="$(sha256sum "$REQ_FILE" | awk '{print $1}')"
-installed_hash="$(cat "$REQ_HASH_FILE" 2>/dev/null || true)"
-if [[ "$current_hash" != "$installed_hash" ]]; then
-  python -m pip install --upgrade pip
-  python -m pip install --upgrade -r "$REQ_FILE"
-  printf '%s\n' "$current_hash" > "$REQ_HASH_FILE"
-fi
-python -m pip install -e "$ROOT"
 
-python - <<'PY'
-from importlib.metadata import version
+install_requirements() {
+  local mode="${1:-normal}"
+  python -m pip install --upgrade pip
+  if [[ "$mode" == "repair" ]]; then
+    echo "Worker-Abhängigkeiten werden repariert. Python-Pakete, das ewige Steckdosenziehen im Maschinenraum."
+    python -m pip install --upgrade --force-reinstall --no-cache-dir -r "$REQ_FILE"
+  else
+    python -m pip install --upgrade -r "$REQ_FILE"
+  fi
+}
+
+check_requirements() {
+  python - <<'PY'
+from importlib.metadata import PackageNotFoundError, version
 
 expected = {
     "datasets": "3.2.0",
@@ -74,13 +78,35 @@ expected = {
 }
 errors = []
 for package, wanted in expected.items():
-    found = version(package)
+    try:
+        found = version(package)
+    except PackageNotFoundError:
+        found = "nicht installiert"
     print(f"{package}: {found}")
     if found != wanted:
         errors.append(f"{package}={found}, erwartet {wanted}")
 if errors:
     raise SystemExit("Worker-Abhängigkeiten stimmen nicht: " + "; ".join(errors))
+PY
+}
 
+current_hash="$(sha256sum "$REQ_FILE" | awk '{print $1}')"
+installed_hash="$(cat "$REQ_HASH_FILE" 2>/dev/null || true)"
+if [[ "$current_hash" != "$installed_hash" ]]; then
+  install_requirements normal
+  printf '%s\n' "$current_hash" > "$REQ_HASH_FILE"
+fi
+
+if ! check_requirements; then
+  rm -f "$REQ_HASH_FILE"
+  install_requirements repair
+  check_requirements
+  printf '%s\n' "$current_hash" > "$REQ_HASH_FILE"
+fi
+
+python -m pip install -e "$ROOT"
+
+python - <<'PY'
 import torch
 if not torch.cuda.is_available():
     raise SystemExit(
