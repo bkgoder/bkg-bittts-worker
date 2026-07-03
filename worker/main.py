@@ -15,7 +15,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from worker.bootstrap import ensure_training_bundle, training_root
+from worker.bootstrap import ensure_training_bundle, patch_training_runtime, training_root
 from worker.client import CoordinatorClient
 from worker.paths import REPO_ROOT, RUNTIME_DIR
 
@@ -268,12 +268,19 @@ def execute_job(
     heartbeat.start()
     buffered: list[str] = []
     last_flush = time.monotonic()
+    last_runtime_patch = 0.0
 
     try:
         for line in process.stdout:
             print(line, end="", flush=True)
             buffered.append(line)
             now = time.monotonic()
+            if now - last_runtime_patch >= 5:
+                try:
+                    patch_training_runtime()
+                except Exception as error:
+                    print(f"Runtime-Patch fehlgeschlagen: {error}", flush=True)
+                last_runtime_patch = now
             if len(buffered) >= 20 or now - last_flush >= 2:
                 client.request(
                     "POST",
@@ -388,31 +395,32 @@ def run_worker(once: bool = False) -> int:
                         },
                     )
                 except Exception as exc:
-                    print(f"Jobabschluss konnte nicht gemeldet werden: {exc}", flush=True)
+                    print(f"Job-Completion fehlgeschlagen: {exc}", flush=True)
                 print(f"Job beendet: {job['id']} success={success}", flush=True)
                 if once:
                     return 0 if success else 1
-            elif once:
-                print("Kein passender Job in der Queue.", flush=True)
-                return 0
+            else:
+                time.sleep(poll_seconds)
         except KeyboardInterrupt:
             STOP_REQUESTED.set()
+            break
         except Exception as exc:
-            print(f"Worker-Verbindungsfehler: {exc}", flush=True)
-            if once:
-                return 1
-        STOP_REQUESTED.wait(poll_seconds)
-
+            print(f"Worker-Fehler: {exc}", flush=True)
+            time.sleep(min(30, poll_seconds * 2))
     return 0
 
 
-def main() -> None:
-    if not IS_WINDOWS:
-        signal.signal(signal.SIGTERM, handle_signal)
-    signal.signal(signal.SIGINT, handle_signal)
-    parser = argparse.ArgumentParser(description="BKG BitTTS REST Worker")
-    parser.add_argument("--once", action="store_true", help="Maximal einen Job bearbeiten")
-    args = parser.parse_args()
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="BKG BitTTS Worker")
+    parser.add_argument("--once", action="store_true", help="Nur einen Job abarbeiten und beenden")
+    args = parser.parse_args(argv)
+
+    for signum in (signal.SIGINT, signal.SIGTERM):
+        try:
+            signal.signal(signum, handle_signal)
+        except ValueError:
+            pass
+
     raise SystemExit(run_worker(once=args.once))
 
 
