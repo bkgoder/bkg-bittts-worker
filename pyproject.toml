@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "bkg-bittts-worker"
-version = "0.5.1"
+version = "0.5.2"
 description = "BKG BitTTS GPU worker client for train.eysho.info"
 requires-python = ">=3.10"
 dependencies = []

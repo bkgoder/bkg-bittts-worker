@@ -12,6 +12,26 @@ GPU-Worker für [BKG BitTTS Trainer](https://github.com/bkgoder/bkg-bittts-train
 
 **Kein separates shutup-Clone nötig** — der Worker holt `mls-voice-trainer.sh` inkl. Upstream-Patches (scipy, monotonic_align, Colab-Buckets) vom Koordinator.
 
+## Docker (GPU, lokal)
+
+Voraussetzungen: [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html), Docker Compose v2.
+
+```bash
+git clone https://github.com/bkgoder/bkg-bittts-worker.git
+cd bkg-bittts-worker
+cp .env.example .env   # BITTTS_WORKER_TOKEN aus Trainer-UI (/ui → Setup)
+
+bash scripts/docker/start.sh    # build + start
+bash scripts/docker/status.sh   # GPU + Logs
+bash scripts/docker/logs.sh     # live
+bash scripts/docker/shell.sh    # bash im Container
+bash scripts/docker/stop.sh
+```
+
+Der Container enthält **CUDA + PyTorch**, `espeak-ng`, `git` und MLS-Abhängigkeiten. Trainingsskripte kommen per Bootstrap vom Koordinator (oder `BITTTS_SHUTUP_ROOT` als Volume).
+
+Persistenz: Docker-Volumes `bkg-bittts-worker-runtime` (Bundle) und `bkg-bittts-worker-data` (MLS-Cache).
+
 ## Windows (PowerShell)
 
 Voraussetzungen:

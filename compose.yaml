@@ -1,0 +1,38 @@
+name: bkg-bittts-worker
+
+services:
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: bkg-bittts-worker:local-gpu
+    container_name: bkg-bittts-worker-gpu
+    env_file:
+      - .env
+    environment:
+      BITTTS_WORKER_RUNTIME: /runtime
+      BITTTS_BUNDLE_DIR: /runtime/bundle
+      BITTTS_WORKER_DATASET: /data/mls-german
+      BITTTS_DATASET_SPLIT: ${BITTTS_DATASET_SPLIT:-9_hours}
+      BITTTS_MAX_HOURS: ${BITTTS_MAX_HOURS:-9.0}
+      NVIDIA_VISIBLE_DEVICES: ${NVIDIA_VISIBLE_DEVICES:-all}
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
+    volumes:
+      - worker_runtime:/runtime
+      - worker_data:/data
+      # Optional: lokales shutup statt Remote-Bootstrap
+      # - ${BITTTS_SHUTUP_ROOT:-../bkg-bittts-shutup}:/shutup:ro
+    # shm_size: 8gb  # bei OOM im DataLoader einkommentieren
+    restart: unless-stopped
+    gpus: all
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"
+
+volumes:
+  worker_runtime:
+    name: bkg-bittts-worker-runtime
+  worker_data:
+    name: bkg-bittts-worker-data

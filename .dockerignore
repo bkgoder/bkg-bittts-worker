@@ -1,0 +1,12 @@
+.env
+.venv
+runtime
+.git
+__pycache__
+*.pyc
+*.pyo
+*.log
+worker.pid
+bkg_bittts_worker.egg-info
+.pipx
+.bin
