@@ -75,7 +75,13 @@ def _ensure_monotonic_align(upstream: Path) -> None:
 
     print("Baue monotonic_align Cython-Erweiterung …", flush=True)
     subprocess.run(
-        [sys.executable, "setup.py", "build_ext", "--inplace"],
+        [
+            sys.executable,
+            "setup.py",
+            "build_ext",
+            "--build-lib",
+            str(upstream),
+        ],
         cwd=package,
         check=True,
     )
