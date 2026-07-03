@@ -41,18 +41,33 @@ def _patch_upstream_compat(root: Path) -> None:
         return
 
     source = pqmf.read_text(encoding="utf-8")
-    old = "from scipy.signal import kaiser"
-    if old not in source:
-        return
+    lines = source.splitlines()
 
-    replacement = (
-        "try:\n"
-        "    from scipy.signal.windows import kaiser\n"
-        "except ImportError:\n"
-        "    from scipy.signal import kaiser"
+    anchor = next(
+        (index for index, line in enumerate(lines) if line.strip() == "import torch.nn.functional as F"),
+        None,
     )
-    pqmf.write_text(source.replace(old, replacement, 1), encoding="utf-8")
-    print("Kompatibilitätsfix angewendet: scipy.signal.windows.kaiser", flush=True)
+    function = next(
+        (index for index, line in enumerate(lines) if line.startswith("def design_prototype_filter")),
+        None,
+    )
+    if anchor is None or function is None or function <= anchor:
+        raise RuntimeError(f"Unbekanntes pqmf.py-Layout: {pqmf}")
+
+    normalized = [
+        *lines[: anchor + 1],
+        "",
+        "from scipy.signal.windows import kaiser",
+        "",
+        "",
+        *lines[function:],
+    ]
+    updated = "\n".join(normalized) + "\n"
+    if updated != source:
+        pqmf.write_text(updated, encoding="utf-8")
+        print("PQMF-Importblock repariert: scipy.signal.windows.kaiser", flush=True)
+
+    compile(updated, str(pqmf), "exec")
 
 
 def _bundle_ready(root: Path) -> bool:
@@ -92,7 +107,7 @@ def ensure_training_bundle(coordinator_url: str, token: str, force: bool = False
         f"{base}{TRAINING_BUNDLE_ENDPOINT}",
         headers={
             "Authorization": f"Bearer {token}",
-            "User-Agent": "bkg-bittts-worker/0.6.1",
+            "User-Agent": "bkg-bittts-worker/0.6.2",
             "Accept": "application/zip",
         },
     )
