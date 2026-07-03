@@ -69,7 +69,7 @@ expected = {
     "huggingface_hub": "0.27.1",
     "fsspec": "2024.9.0",
     "numpy": "1.26.4",
-    "scipy": "1.10.1",
+    "scipy": "1.13.1",
     "pandas": "2.2.0",
 }
 errors = []
