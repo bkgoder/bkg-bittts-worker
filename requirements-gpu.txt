@@ -1,8 +1,9 @@
-# GPU-Worker-Image: PyTorch kommt aus pytorch/pytorch Base-Image.
-# MLS-Training (gleiche Pins wie bkg-bittts-shutup/scripts/requirements-mls-worker.txt)
-fsspec>=2024.6.0,<2025
-huggingface_hub>=0.27.0,<1
-datasets>=3.2.0,<4
+# GPU-Worker: PyTorch kommt aus dem vorhandenen GPU-Image oder Paperspace.
+# Exakte Pins verhindern den HfFileSystem/fsspec maxdepth-Fehler.
+datasets==3.2.0
+huggingface_hub==0.27.1
+fsspec[http]==2024.9.0
+
 gdown>=5,<6
 numpy>=1.26,<3
 scipy>=1.11,<1.14
