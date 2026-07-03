@@ -180,6 +180,9 @@ def job_command(job: dict[str, Any]) -> tuple[list[str], dict[str, str]]:
     default_voice = f"de-mls-{safe_name(speaker_id)}" if profile == "mls-german" else "de-default"
     env = os.environ.copy()
     env["BITTTS_PYTHON"] = sys.executable
+    patch_path = str(ROOT / "worker_patches")
+    previous_pythonpath = env.get("PYTHONPATH", "").strip()
+    env["PYTHONPATH"] = patch_path if not previous_pythonpath else f"{patch_path}{os.pathsep}{previous_pythonpath}"
     env["BITTTS_DATASET_PROFILE"] = profile
     env["BITTTS_WORKER_DATASET"] = resolve_worker_dataset(
         os.environ.get("BITTTS_WORKER_DATASET", ""),
