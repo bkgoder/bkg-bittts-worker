@@ -35,6 +35,26 @@ def _chmod_scripts(root: Path) -> None:
             pass
 
 
+def _patch_upstream_compat(root: Path) -> None:
+    pqmf = root / "vendor" / "MB-iSTFT-VITS" / "pqmf.py"
+    if not pqmf.is_file():
+        return
+
+    source = pqmf.read_text(encoding="utf-8")
+    old = "from scipy.signal import kaiser"
+    if old not in source:
+        return
+
+    replacement = (
+        "try:\n"
+        "    from scipy.signal.windows import kaiser\n"
+        "except ImportError:\n"
+        "    from scipy.signal import kaiser"
+    )
+    pqmf.write_text(source.replace(old, replacement, 1), encoding="utf-8")
+    print("Kompatibilitätsfix angewendet: scipy.signal.windows.kaiser", flush=True)
+
+
 def _bundle_ready(root: Path) -> bool:
     required = root / "scripts" / "mls-voice-trainer.sh"
     return required.is_file()
@@ -48,6 +68,7 @@ def ensure_training_bundle(coordinator_url: str, token: str, force: bool = False
             raise RuntimeError(
                 f"BITTTS_SHUTUP_ROOT ist gesetzt, aber unvollständig: {root}"
             )
+        _patch_upstream_compat(root)
         print(f"Lokale Trainings-Engine: {root}", flush=True)
         return root
 
@@ -59,6 +80,7 @@ def ensure_training_bundle(coordinator_url: str, token: str, force: bool = False
         force = env_force in {"1", "true", "yes", "on"}
 
     if not force and DIGEST_FILE.exists() and _bundle_ready(BUNDLE_DIR):
+        _patch_upstream_compat(BUNDLE_DIR)
         print(
             "Lokales Trainings-Bundle bleibt unverändert. "
             "Für ein bewusstes Update: BITTTS_BUNDLE_FORCE=1",
@@ -70,7 +92,7 @@ def ensure_training_bundle(coordinator_url: str, token: str, force: bool = False
         f"{base}{TRAINING_BUNDLE_ENDPOINT}",
         headers={
             "Authorization": f"Bearer {token}",
-            "User-Agent": "bkg-bittts-worker/0.6.0",
+            "User-Agent": "bkg-bittts-worker/0.6.1",
             "Accept": "application/zip",
         },
     )
@@ -96,6 +118,7 @@ def ensure_training_bundle(coordinator_url: str, token: str, force: bool = False
         archive.extractall(temp_dir)
 
     _chmod_scripts(temp_dir)
+    _patch_upstream_compat(temp_dir)
 
     if not _bundle_ready(temp_dir):
         raise RuntimeError(
