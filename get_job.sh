@@ -20,18 +20,40 @@ if [[ ! -x "$VENV_DIR/bin/python" ]]; then
   python3 -m venv --system-site-packages "$VENV_DIR"
 fi
 
+# Paperspace läuft im Notebook-Container als root. Die Venv bleibt trotzdem lokal im Repo.
+export PIP_ROOT_USER_ACTION=ignore
+
 # shellcheck disable=SC1091
 source "$VENV_DIR/bin/activate"
 current_hash="$(sha256sum "$REQ_FILE" | awk '{print $1}')"
 installed_hash="$(cat "$REQ_HASH_FILE" 2>/dev/null || true)"
 if [[ "$current_hash" != "$installed_hash" ]]; then
-  python -m pip install --upgrade pip wheel setuptools
-  python -m pip install --upgrade --force-reinstall -r "$REQ_FILE"
+  python -m pip install --upgrade pip
+  python -m pip install --upgrade -r "$REQ_FILE"
   printf '%s\n' "$current_hash" > "$REQ_HASH_FILE"
 fi
 python -m pip install -e "$ROOT"
 
 python - <<'PY'
+from importlib.metadata import version
+
+expected = {
+    "datasets": "3.2.0",
+    "huggingface_hub": "0.27.1",
+    "fsspec": "2024.9.0",
+    "numpy": "1.26.4",
+    "scipy": "1.10.1",
+    "pandas": "2.2.0",
+}
+errors = []
+for package, wanted in expected.items():
+    found = version(package)
+    print(f"{package}: {found}")
+    if found != wanted:
+        errors.append(f"{package}={found}, erwartet {wanted}")
+if errors:
+    raise SystemExit("Worker-Abhängigkeiten stimmen nicht: " + "; ".join(errors))
+
 import torch
 if not torch.cuda.is_available():
     raise SystemExit(
