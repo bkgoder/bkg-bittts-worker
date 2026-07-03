@@ -1,0 +1,11 @@
+---
+description: Worker repo safety rules
+alwaysApply: true
+---
+
+# Worker Repo Safety
+
+- This repository owns only the BitTTS worker runtime.
+- Do not edit trainer coordinator code from this repository.
+- Do not commit `.env`, tokens, runtime caches, datasets, notebooks, or generated training artifacts.
+- Keep Paperspace startup commands compatible with a plain notebook terminal.
