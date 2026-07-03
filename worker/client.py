@@ -5,6 +5,8 @@ from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
+from worker.metrics import gpu_snapshot
+
 
 class CoordinatorClient:
     def __init__(self, base_url: str, token: str) -> None:
@@ -12,7 +14,16 @@ class CoordinatorClient:
         self.token = token
 
     def request(self, method: str, path: str, payload: dict[str, Any] | None = None) -> Any:
-        data = None if payload is None else json.dumps(payload).encode("utf-8")
+        outgoing = payload
+        if payload and isinstance(payload.get("metadata"), dict):
+            if path == "/api/workers/register" or path.endswith("/heartbeat"):
+                outgoing = dict(payload)
+                outgoing["metadata"] = {
+                    **payload["metadata"],
+                    **gpu_snapshot(),
+                }
+
+        data = None if outgoing is None else json.dumps(outgoing).encode("utf-8")
         request = Request(
             f"{self.base_url}{path}",
             data=data,
@@ -20,7 +31,7 @@ class CoordinatorClient:
             headers={
                 "Authorization": f"Bearer {self.token}",
                 "Content-Type": "application/json",
-                "User-Agent": "bkg-bittts-worker/0.5.1",
+                "User-Agent": "bkg-bittts-worker/0.5.3",
             },
         )
         try:
