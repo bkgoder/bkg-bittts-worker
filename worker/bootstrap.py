@@ -5,6 +5,8 @@ import io
 import json
 import os
 import stat
+import subprocess
+import sys
 import zipfile
 from pathlib import Path
 from urllib.request import Request, urlopen
@@ -35,39 +37,95 @@ def _chmod_scripts(root: Path) -> None:
             pass
 
 
-def _patch_upstream_compat(root: Path) -> None:
-    pqmf = root / "vendor" / "MB-iSTFT-VITS" / "pqmf.py"
-    if not pqmf.is_file():
+def _ensure_monotonic_align(upstream: Path) -> None:
+    package = upstream / "monotonic_align"
+    init_file = package / "__init__.py"
+    setup_file = package / "setup.py"
+    if not init_file.is_file() or not setup_file.is_file():
         return
 
-    source = pqmf.read_text(encoding="utf-8")
+    source = init_file.read_text(encoding="utf-8")
     lines = source.splitlines()
-
-    anchor = next(
-        (index for index, line in enumerate(lines) if line.strip() == "import torch.nn.functional as F"),
-        None,
-    )
-    function = next(
-        (index for index, line in enumerate(lines) if line.startswith("def design_prototype_filter")),
-        None,
-    )
-    if anchor is None or function is None or function <= anchor:
-        raise RuntimeError(f"Unbekanntes pqmf.py-Layout: {pqmf}")
-
-    normalized = [
-        *lines[: anchor + 1],
-        "",
-        "from scipy.signal.windows import kaiser",
-        "",
-        "",
-        *lines[function:],
-    ]
+    normalized: list[str] = []
+    replaced = False
+    for line in lines:
+        if "maximum_path_c" in line and line.lstrip().startswith("from "):
+            if not replaced:
+                normalized.append("from .core import maximum_path_c")
+                replaced = True
+            continue
+        normalized.append(line)
+    if not replaced:
+        normalized.insert(2, "from .core import maximum_path_c")
     updated = "\n".join(normalized) + "\n"
     if updated != source:
-        pqmf.write_text(updated, encoding="utf-8")
-        print("PQMF-Importblock repariert: scipy.signal.windows.kaiser", flush=True)
+        init_file.write_text(updated, encoding="utf-8")
+        print("monotonic_align-Import repariert: from .core import maximum_path_c", flush=True)
+    compile(updated, str(init_file), "exec")
 
-    compile(updated, str(pqmf), "exec")
+    probe = subprocess.run(
+        [sys.executable, "-c", "import monotonic_align"],
+        cwd=upstream,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if probe.returncode == 0:
+        return
+
+    print("Baue monotonic_align Cython-Erweiterung …", flush=True)
+    subprocess.run(
+        [sys.executable, "setup.py", "build_ext", "--inplace"],
+        cwd=package,
+        check=True,
+    )
+    probe = subprocess.run(
+        [sys.executable, "-c", "import monotonic_align"],
+        cwd=upstream,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if probe.returncode != 0:
+        detail = (probe.stderr or probe.stdout).strip()
+        raise RuntimeError(f"monotonic_align konnte nicht geladen werden: {detail}")
+    print("monotonic_align ist gebaut und importierbar.", flush=True)
+
+
+def _patch_upstream_compat(root: Path) -> None:
+    upstream = root / "vendor" / "MB-iSTFT-VITS"
+    if not upstream.is_dir():
+        return
+
+    pqmf = upstream / "pqmf.py"
+    if pqmf.is_file():
+        source = pqmf.read_text(encoding="utf-8")
+        lines = source.splitlines()
+        anchor = next(
+            (index for index, line in enumerate(lines) if line.strip() == "import torch.nn.functional as F"),
+            None,
+        )
+        function = next(
+            (index for index, line in enumerate(lines) if line.startswith("def design_prototype_filter")),
+            None,
+        )
+        if anchor is None or function is None or function <= anchor:
+            raise RuntimeError(f"Unbekanntes pqmf.py-Layout: {pqmf}")
+        normalized = [
+            *lines[: anchor + 1],
+            "",
+            "from scipy.signal.windows import kaiser",
+            "",
+            "",
+            *lines[function:],
+        ]
+        updated = "\n".join(normalized) + "\n"
+        if updated != source:
+            pqmf.write_text(updated, encoding="utf-8")
+            print("PQMF-Importblock repariert: scipy.signal.windows.kaiser", flush=True)
+        compile(updated, str(pqmf), "exec")
+
+    _ensure_monotonic_align(upstream)
 
 
 def _bundle_ready(root: Path) -> bool:
@@ -107,7 +165,7 @@ def ensure_training_bundle(coordinator_url: str, token: str, force: bool = False
         f"{base}{TRAINING_BUNDLE_ENDPOINT}",
         headers={
             "Authorization": f"Bearer {token}",
-            "User-Agent": "bkg-bittts-worker/0.6.2",
+            "User-Agent": "bkg-bittts-worker/0.6.3",
             "Accept": "application/zip",
         },
     )
