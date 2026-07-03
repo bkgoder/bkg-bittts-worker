@@ -1,8 +1,9 @@
 # GPU-Worker-Image: PyTorch kommt aus pytorch/pytorch Base-Image.
 # MLS-Training (gleiche Pins wie bkg-bittts-shutup/scripts/requirements-mls-worker.txt)
-datasets>=2.19,<4
+fsspec>=2024.6.0,<2025
+huggingface_hub>=0.27.0,<1
+datasets>=3.2.0,<4
 gdown>=5,<6
-huggingface_hub>=0.23,<2
 numpy>=1.26,<3
 scipy>=1.11,<1.14
 soundfile>=0.12,<1
