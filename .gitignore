@@ -8,3 +8,4 @@ __pycache__/
 *.py[cod]
 worker.pid
 *.log
+docs/agent-block-*.md
