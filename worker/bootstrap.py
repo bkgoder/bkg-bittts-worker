@@ -37,6 +37,28 @@ def _chmod_scripts(root: Path) -> None:
             pass
 
 
+def _patch_training_scripts(root: Path) -> None:
+    scripts = root / "scripts"
+    if not scripts.is_dir():
+        return
+
+    replacements = {
+        "setup.py build_ext --inplace": "setup.py build_ext --build-lib ..",
+        "build_ext --inplace": "build_ext --build-lib ..",
+    }
+    for script in scripts.glob("*.sh"):
+        source = script.read_text(encoding="utf-8")
+        updated = source
+        for old, new in replacements.items():
+            updated = updated.replace(old, new)
+        if updated != source:
+            script.write_text(updated, encoding="utf-8")
+            print(
+                f"Trainingsskript repariert: {script.name} baut monotonic_align mit --build-lib ..",
+                flush=True,
+            )
+
+
 def _ensure_monotonic_align(upstream: Path) -> None:
     package = upstream / "monotonic_align"
     init_file = package / "__init__.py"
@@ -99,6 +121,8 @@ def _ensure_monotonic_align(upstream: Path) -> None:
 
 
 def _patch_upstream_compat(root: Path) -> None:
+    _patch_training_scripts(root)
+
     upstream = root / "vendor" / "MB-iSTFT-VITS"
     if not upstream.is_dir():
         return
