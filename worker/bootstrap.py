@@ -65,15 +65,16 @@ def _patch_data_utils(upstream: Path) -> None:
         return
 
     source = data_utils.read_text(encoding="utf-8")
-    if "BKG empty bucket guard" in source:
-        return
-
-    target = "ids_bucket = ids_bucket + ids_bucket * (rem // len_bucket) + ids_bucket[:(rem % len_bucket)]"
     lines = source.splitlines()
     updated: list[str] = []
     changed = False
+
+    empty_bucket_target = "ids_bucket = ids_bucket + ids_bucket * (rem // len_bucket) + ids_bucket[:(rem % len_bucket)]"
+    needs_empty_bucket_guard = "BKG empty bucket guard" not in source
+    needs_german_symbol_normalization = "BKG German symbol normalization" not in source
+
     for line in lines:
-        if target in line:
+        if needs_empty_bucket_guard and empty_bucket_target in line:
             indent = line[: len(line) - len(line.lstrip())]
             updated.extend(
                 [
@@ -83,13 +84,27 @@ def _patch_data_utils(upstream: Path) -> None:
                 ]
             )
             changed = True
+
+        if needs_german_symbol_normalization and "text_norm = cleaned_text_to_sequence(text)" in line:
+            indent = line[: len(line) - len(line.lstrip())]
+            updated.extend(
+                [
+                    f"{indent}# BKG German symbol normalization: upstream symbol table is ASCII-only.",
+                    f"{indent}text = text.translate(str.maketrans({{",
+                    f"{indent}  'ä': 'ae', 'ö': 'oe', 'ü': 'ue', 'ß': 'ss',",
+                    f"{indent}  'Ä': 'Ae', 'Ö': 'Oe', 'Ü': 'Ue',",
+                    f"{indent}}}))",
+                ]
+            )
+            changed = True
+
         updated.append(line)
 
     if changed:
         patched = "\n".join(updated) + "\n"
         data_utils.write_text(patched, encoding="utf-8")
         compile(patched, str(data_utils), "exec")
-        print("data_utils.py repariert: leere Buckets werden übersprungen.", flush=True)
+        print("data_utils.py repariert: leere Buckets und deutsche Umlaute normalisiert.", flush=True)
 
 
 def _ensure_monotonic_align(upstream: Path) -> None:
