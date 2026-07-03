@@ -6,11 +6,38 @@ ENV_FILE="$ROOT/.env"
 VENV_DIR="$ROOT/.venv"
 REQ_FILE="$ROOT/requirements-gpu.txt"
 REQ_HASH_FILE="$VENV_DIR/.bittts-requirements.sha256"
+CALLER_BITTTS_AUTO_PULL="${BITTTS_AUTO_PULL-}"
+CALLER_BITTTS_BUNDLE_FORCE="${BITTTS_BUNDLE_FORCE-}"
 
 [[ -f "$ENV_FILE" ]] || {
   echo "FEHLER: .env fehlt. Zuerst ./get_home.sh ausführen." >&2
   exit 1
 }
+
+load_worker_env() {
+  set -a
+  # shellcheck disable=SC1090
+  source "$ENV_FILE"
+  set +a
+
+  export BITTTS_WORKER_RUNTIME="${BITTTS_WORKER_RUNTIME:-$ROOT/runtime}"
+  export BITTTS_WORKER_DATASET="${BITTTS_WORKER_DATASET:-$ROOT/data/mls-german}"
+  if [[ -n "$CALLER_BITTTS_AUTO_PULL" ]]; then
+    export BITTTS_AUTO_PULL="$CALLER_BITTTS_AUTO_PULL"
+  fi
+  if [[ -n "$CALLER_BITTTS_BUNDLE_FORCE" ]]; then
+    export BITTTS_BUNDLE_FORCE="$CALLER_BITTTS_BUNDLE_FORCE"
+  else
+    export BITTTS_BUNDLE_FORCE="${BITTTS_BUNDLE_FORCE:-0}"
+  fi
+}
+
+load_worker_env
+
+if [[ "${BITTTS_GET_JOB_ENV_DRY_RUN:-0}" == "1" ]]; then
+  printf 'BITTTS_BUNDLE_FORCE=%s\n' "$BITTTS_BUNDLE_FORCE"
+  exit 0
+fi
 
 if [[ "${BITTTS_AUTO_PULL:-0}" == "1" ]] && git -C "$ROOT" diff --quiet && git -C "$ROOT" diff --cached --quiet; then
   git -C "$ROOT" pull --ff-only
@@ -62,14 +89,6 @@ if not torch.cuda.is_available():
 print("GPU:", torch.cuda.get_device_name(0))
 PY
 
-set -a
-# shellcheck disable=SC1090
-source "$ENV_FILE"
-set +a
-
-export BITTTS_WORKER_RUNTIME="${BITTTS_WORKER_RUNTIME:-$ROOT/runtime}"
-export BITTTS_WORKER_DATASET="${BITTTS_WORKER_DATASET:-$ROOT/data/mls-german}"
-export BITTTS_BUNDLE_FORCE="${BITTTS_BUNDLE_FORCE:-0}"
 mkdir -p "$BITTTS_WORKER_RUNTIME" "$BITTTS_WORKER_DATASET"
 
 echo "Worker startet im Vordergrund."
