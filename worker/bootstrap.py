@@ -4,6 +4,7 @@ import hashlib
 import io
 import json
 import os
+import shutil
 import stat
 import subprocess
 import sys
@@ -112,6 +113,7 @@ def _patch_training_configs(root: Path) -> None:
     max_eval_batch = int(os.environ.get("BITTTS_MAX_EVAL_BATCH_SIZE", "1"))
     max_workers = int(os.environ.get("BITTTS_MAX_DATA_WORKERS", "2"))
     max_segment = int(os.environ.get("BITTTS_MAX_SEGMENT_SIZE", "8192"))
+    max_eval_interval = int(os.environ.get("BITTTS_MAX_EVAL_INTERVAL", "200"))
     changed_files = 0
 
     def clamp_config(value: object) -> bool:
@@ -129,6 +131,9 @@ def _patch_training_configs(root: Path) -> None:
                     changed = True
                 elif key == "segment_size" and isinstance(item, int) and item > max_segment:
                     value[key] = max_segment
+                    changed = True
+                elif key == "eval_interval" and isinstance(item, int) and item > max_eval_interval:
+                    value[key] = max_eval_interval
                     changed = True
                 else:
                     changed = clamp_config(item) or changed
@@ -156,7 +161,28 @@ def _patch_training_configs(root: Path) -> None:
     if changed_files:
         print(
             f"Trainings-Configs repariert: batch_size<={max_batch}, eval_batch_size<={max_eval_batch}, "
-            f"workers<={max_workers}, segment_size<={max_segment} ({changed_files} Dateien).",
+            f"workers<={max_workers}, segment_size<={max_segment}, eval_interval<={max_eval_interval} "
+            f"({changed_files} Dateien).",
+            flush=True,
+        )
+
+
+def _materialize_generator_checkpoints(upstream: Path) -> None:
+    logs = upstream / "logs"
+    if not logs.is_dir():
+        return
+    for checkpoint in logs.glob("*/G_*.pth"):
+        if not checkpoint.is_symlink():
+            continue
+        target = checkpoint.resolve()
+        if not target.is_file():
+            continue
+        temp = checkpoint.with_name(f".{checkpoint.name}.bkg-real.tmp")
+        shutil.copy2(target, temp)
+        checkpoint.unlink()
+        temp.replace(checkpoint)
+        print(
+            f"Generator-Checkpoint materialisiert: {checkpoint} ist jetzt eine echte Datei statt Symlink.",
             flush=True,
         )
 
@@ -253,6 +279,7 @@ def _patch_upstream_compat(root: Path) -> None:
         compile(updated, str(pqmf), "exec")
 
     _patch_data_utils(upstream)
+    _materialize_generator_checkpoints(upstream)
     _ensure_monotonic_align(upstream)
 
 
@@ -309,8 +336,6 @@ def ensure_training_bundle(coordinator_url: str, token: str, force: bool = False
 
     temp_dir = BUNDLE_DIR.with_name(f"{BUNDLE_DIR.name}.tmp")
     if temp_dir.exists():
-        import shutil
-
         shutil.rmtree(temp_dir, ignore_errors=True)
     temp_dir.mkdir(parents=True, exist_ok=True)
 
@@ -330,8 +355,6 @@ def ensure_training_bundle(coordinator_url: str, token: str, force: bool = False
             "Trainings-Bundle unvollständig nach Download "
             f"(scripts/mls-voice-trainer.sh fehlt in {temp_dir})."
         )
-
-    import shutil
 
     if BUNDLE_DIR.exists():
         shutil.rmtree(BUNDLE_DIR, ignore_errors=True)
