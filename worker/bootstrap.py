@@ -59,6 +59,39 @@ def _patch_training_scripts(root: Path) -> None:
             )
 
 
+def _patch_data_utils(upstream: Path) -> None:
+    data_utils = upstream / "data_utils.py"
+    if not data_utils.is_file():
+        return
+
+    source = data_utils.read_text(encoding="utf-8")
+    if "BKG empty bucket guard" in source:
+        return
+
+    target = "ids_bucket = ids_bucket + ids_bucket * (rem // len_bucket) + ids_bucket[:(rem % len_bucket)]"
+    lines = source.splitlines()
+    updated: list[str] = []
+    changed = False
+    for line in lines:
+        if target in line:
+            indent = line[: len(line) - len(line.lstrip())]
+            updated.extend(
+                [
+                    f"{indent}# BKG empty bucket guard: upstream can create empty length buckets.",
+                    f"{indent}if len_bucket == 0:",
+                    f"{indent}  continue",
+                ]
+            )
+            changed = True
+        updated.append(line)
+
+    if changed:
+        patched = "\n".join(updated) + "\n"
+        data_utils.write_text(patched, encoding="utf-8")
+        compile(patched, str(data_utils), "exec")
+        print("data_utils.py repariert: leere Buckets werden übersprungen.", flush=True)
+
+
 def _ensure_monotonic_align(upstream: Path) -> None:
     package = upstream / "monotonic_align"
     init_file = package / "__init__.py"
@@ -155,7 +188,12 @@ def _patch_upstream_compat(root: Path) -> None:
             print("PQMF-Importblock repariert: scipy.signal.windows.kaiser", flush=True)
         compile(updated, str(pqmf), "exec")
 
+    _patch_data_utils(upstream)
     _ensure_monotonic_align(upstream)
+
+
+def patch_training_runtime(root: Path | None = None) -> None:
+    _patch_upstream_compat(root or training_root())
 
 
 def _bundle_ready(root: Path) -> bool:
