@@ -4,6 +4,8 @@ set -Eeuo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ENV_FILE="$ROOT/.env"
 VENV_DIR="$ROOT/.venv"
+REQ_FILE="$ROOT/requirements-gpu.txt"
+REQ_HASH_FILE="$VENV_DIR/.bittts-requirements.sha256"
 
 [[ -f "$ENV_FILE" ]] || {
   echo "FEHLER: .env fehlt. Zuerst ./get_home.sh ausführen." >&2
@@ -20,8 +22,13 @@ fi
 
 # shellcheck disable=SC1091
 source "$VENV_DIR/bin/activate"
-python -m pip install --upgrade pip wheel setuptools
-python -m pip install --upgrade --force-reinstall -r "$ROOT/requirements-gpu.txt"
+current_hash="$(sha256sum "$REQ_FILE" | awk '{print $1}')"
+installed_hash="$(cat "$REQ_HASH_FILE" 2>/dev/null || true)"
+if [[ "$current_hash" != "$installed_hash" ]]; then
+  python -m pip install --upgrade pip wheel setuptools
+  python -m pip install --upgrade --force-reinstall -r "$REQ_FILE"
+  printf '%s\n' "$current_hash" > "$REQ_HASH_FILE"
+fi
 python -m pip install -e "$ROOT"
 
 python - <<'PY'
