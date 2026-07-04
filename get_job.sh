@@ -25,9 +25,12 @@ Nutzung:
   ./get_job.sh 3 -- --once             # drei Worker starten, je nur einen Job
 
 Mehrere Worker:
-  - Jeder Worker bekommt automatisch einen eindeutigen Namen und eine Worker-ID.
+  - Jeder Worker bekommt automatisch einen eindeutigen Namen und eine stabile Worker-ID.
+  - Die stabile Default-ID basiert auf BITTTS_WORKER_NAME, nicht auf dem Container-Hostname.
+    Paperspace würfelt Hostnames sonst neu und der Koordinator denkt, der Token gehört
+    plötzlich einem anderen Worker. Sehr hilfreich, wenn man Feuer mag.
   - Jeder Worker bekommt einen eigenen MASTER_PORT, damit Torch Distributed nicht auf
-    demselben Port explodiert wie ein schlecht geplanter Grillabend.
+    demselben Port explodiert.
   - Logs landen unter runtime/multi-worker/worker-N.log.
   - PIDs landen unter runtime/multi-worker/worker-N.pid.
   - Bei Managed Worker Tokens braucht jeder Slot einen eigenen Token:
@@ -200,7 +203,7 @@ PY
 mkdir -p "$BITTTS_WORKER_RUNTIME" "$BITTTS_WORKER_DATASET"
 
 base_worker_name="${BITTTS_WORKER_NAME:-$(hostname)}"
-base_worker_id="${BITTTS_WORKER_ID:-}"
+base_worker_id="${BITTTS_WORKER_ID:-$base_worker_name}"
 base_master_port="${MASTER_PORT:-65520}"
 if ! [[ "$base_master_port" =~ ^[0-9]+$ ]]; then
   echo "FEHLER: MASTER_PORT muss eine Zahl sein." >&2
@@ -208,10 +211,12 @@ if ! [[ "$base_master_port" =~ ^[0-9]+$ ]]; then
 fi
 
 if (( WORKER_COUNT == 1 )); then
+  export BITTTS_WORKER_ID="$base_worker_id"
   export MASTER_ADDR="${MASTER_ADDR:-127.0.0.1}"
   export MASTER_PORT="$base_master_port"
   echo "Worker startet im Vordergrund."
   echo "Name:        $base_worker_name"
+  echo "ID:          $BITTTS_WORKER_ID"
   echo "Coordinator: ${BITTTS_COORDINATOR_URL:-?}"
   echo "Cache:       $BITTTS_WORKER_DATASET"
   echo "MASTER:      $MASTER_ADDR:$MASTER_PORT"
@@ -242,6 +247,7 @@ done
 
 printf 'Starte %s Worker. Mehrere Prozesse, weil ein einzelner offenbar zu zivilisiert war.\n' "$WORKER_COUNT"
 echo "Name-Basis:   $base_worker_name"
+echo "ID-Basis:     $base_worker_id"
 echo "Coordinator: ${BITTTS_COORDINATOR_URL:-?}"
 echo "Cache:       $BITTTS_WORKER_DATASET"
 echo "Logs:        $multi_dir"
@@ -271,11 +277,7 @@ for slot in $(seq 1 "$WORKER_COUNT"); do
     export BITTTS_WORKER_SLOT="$slot"
     export BITTTS_WORKER_TOKEN="$slot_token"
     export BITTTS_WORKER_NAME="${base_worker_name}-${slot}"
-    if [[ -n "$base_worker_id" ]]; then
-      export BITTTS_WORKER_ID="${base_worker_id}-${slot}"
-    else
-      export BITTTS_WORKER_ID="$(hostname)-${slot}"
-    fi
+    export BITTTS_WORKER_ID="${base_worker_id}-${slot}"
     export MASTER_ADDR="${MASTER_ADDR:-127.0.0.1}"
     export MASTER_PORT="$slot_master_port"
 
