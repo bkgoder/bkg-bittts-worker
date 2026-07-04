@@ -33,6 +33,7 @@ WORKER_NAME="${BITTTS_WORKER_NAME:-paperspace-gpu-01}"
 COORDINATOR="${BITTTS_COORDINATOR_URL:-https://train.eysho.info}"
 POLL_SECONDS="${BITTTS_JOIN_POLL_SECONDS:-3}"
 JOIN_TIMEOUT_SECONDS="${BITTTS_JOIN_TIMEOUT_SECONDS:-1800}"
+JOIN_USER_AGENT="${BITTTS_JOIN_USER_AGENT:-bkg-bittts-worker/1.0 curl-compatible}"
 
 if [[ $# -gt 0 ]]; then
   case "${1:-}" in
@@ -109,7 +110,7 @@ PY
 
 join_and_wait_for_token() {
   local name="$1"
-  python3 - "$COORDINATOR" "$name" "$POLL_SECONDS" "$JOIN_TIMEOUT_SECONDS" <<'PY'
+  python3 - "$COORDINATOR" "$name" "$POLL_SECONDS" "$JOIN_TIMEOUT_SECONDS" "$JOIN_USER_AGENT" <<'PY'
 from __future__ import annotations
 
 import json
@@ -122,13 +123,18 @@ coordinator = sys.argv[1].rstrip('/')
 name = sys.argv[2]
 poll_seconds = max(1, int(sys.argv[3]))
 timeout_seconds = max(30, int(sys.argv[4]))
+user_agent = sys.argv[5]
 
 def request_json(method: str, path: str, payload: dict | None = None) -> dict:
     data = None if payload is None else json.dumps(payload).encode('utf-8')
     request = urllib.request.Request(
         f'{coordinator}{path}',
         data=data,
-        headers={'Content-Type': 'application/json'},
+        headers={
+            'Accept': 'application/json',
+            'Content-Type': 'application/json',
+            'User-Agent': user_agent,
+        },
         method=method,
     )
     try:
@@ -137,6 +143,13 @@ def request_json(method: str, path: str, payload: dict | None = None) -> dict:
             return json.loads(raw) if raw else {}
     except urllib.error.HTTPError as error:
         detail = error.read().decode('utf-8', errors='replace')
+        if error.code == 403 and 'error code: 1010' in detail.lower():
+            raise SystemExit(
+                'JOIN_BLOCKED_BY_EDGE\n'
+                f'{method} {path}\n'
+                f'HTTP {error.code}: {detail}\n'
+                'Cloudflare/Edge blockt diese Anfrage. Teste mit curl; falls curl geht, User-Agent/Firewall-Regel prüfen.'
+            )
         if error.code in {403, 404, 405}:
             raise SystemExit(
                 'JOIN_ENDPOINT_FAILED\n'
