@@ -26,12 +26,12 @@ Mehrere Worker:
   - Jeder Worker bekommt automatisch einen eindeutigen Namen und eine Worker-ID.
   - Logs landen unter runtime/multi-worker/worker-N.log.
   - PIDs landen unter runtime/multi-worker/worker-N.pid.
-  - Falls dein Koordinator Managed Worker Tokens nutzt, setze mehrere Tokens:
+  - Bei Managed Worker Tokens braucht jeder Slot einen eigenen Token:
       BITTTS_WORKER_TOKEN_1=...
       BITTTS_WORKER_TOKEN_2=...
       BITTTS_WORKER_TOKEN_3=...
-    Ohne diese Werte wird BITTTS_WORKER_TOKEN wiederverwendet. Das funktioniert nur,
-    wenn der Koordinator denselben Token für mehrere Worker erlaubt.
+  - BITTTS_WORKER_TOKEN wird im Multi-Worker-Modus absichtlich NICHT wiederverwendet,
+    weil der Koordinator Managed Tokens genau einem Worker zuordnet.
 
 Achtung:
   Mehrere Trainingsjobs auf einer einzelnen GPU können CUDA-OOM auslösen. Für echte
@@ -193,6 +193,25 @@ fi
 multi_dir="$BITTTS_WORKER_RUNTIME/multi-worker"
 mkdir -p "$multi_dir"
 
+declare -A seen_tokens=()
+for slot in $(seq 1 "$WORKER_COUNT"); do
+  token_var="BITTTS_WORKER_TOKEN_${slot}"
+  slot_token="${!token_var:-}"
+  if [[ -z "$slot_token" ]]; then
+    echo "FEHLER: $token_var fehlt." >&2
+    echo "Multi-Worker mit Managed Tokens braucht pro Worker einen eigenen Token." >&2
+    echo "Führe aus: ./get_home.sh --count $WORKER_COUNT $base_worker_name ${BITTTS_COORDINATOR_URL:-https://train.eysho.info}" >&2
+    echo "Oder warte auf den UI-Approve-Join-Flow aus bkg-bittts-trainer#2." >&2
+    exit 1
+  fi
+  if [[ -n "${seen_tokens[$slot_token]:-}" ]]; then
+    echo "FEHLER: $token_var ist identisch mit BITTTS_WORKER_TOKEN_${seen_tokens[$slot_token]}." >&2
+    echo "Managed Tokens dürfen nicht mehrfach verwendet werden. Sonst kommt exakt: Token gehört bereits zu einem anderen Worker." >&2
+    exit 1
+  fi
+  seen_tokens[$slot_token]="$slot"
+done
+
 printf 'Starte %s Worker im Hintergrund. Weil ein Prozess offenbar zu wenig Chaos war.\n' "$WORKER_COUNT"
 echo "Name-Basis:   $base_worker_name"
 echo "Coordinator: ${BITTTS_COORDINATOR_URL:-?}"
@@ -201,11 +220,7 @@ echo "Logs:        $multi_dir"
 
 for slot in $(seq 1 "$WORKER_COUNT"); do
   token_var="BITTTS_WORKER_TOKEN_${slot}"
-  slot_token="${!token_var:-${BITTTS_WORKER_TOKEN:-}}"
-  if [[ -z "$slot_token" ]]; then
-    echo "FEHLER: Kein Token für Worker $slot gefunden ($token_var oder BITTTS_WORKER_TOKEN)." >&2
-    exit 1
-  fi
+  slot_token="${!token_var}"
 
   export BITTTS_WORKER_SLOT="$slot"
   export BITTTS_WORKER_TOKEN="$slot_token"
