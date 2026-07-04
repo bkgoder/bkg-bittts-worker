@@ -14,6 +14,68 @@ CALLER_BITTTS_BUNDLE_FORCE="${BITTTS_BUNDLE_FORCE-}"
   exit 1
 }
 
+usage() {
+  cat <<'USAGE'
+Nutzung:
+  ./get_job.sh              # einen Worker im Vordergrund starten
+  ./get_job.sh 3            # drei Worker im Hintergrund starten
+  ./get_job.sh --count 3    # dasselbe, nur weniger kryptisch
+  ./get_job.sh 3 -- --once  # drei Worker starten, je nur einen Job
+
+Mehrere Worker:
+  - Jeder Worker bekommt automatisch einen eindeutigen Namen und eine Worker-ID.
+  - Logs landen unter runtime/multi-worker/worker-N.log.
+  - PIDs landen unter runtime/multi-worker/worker-N.pid.
+  - Falls dein Koordinator Managed Worker Tokens nutzt, setze mehrere Tokens:
+      BITTTS_WORKER_TOKEN_1=...
+      BITTTS_WORKER_TOKEN_2=...
+      BITTTS_WORKER_TOKEN_3=...
+    Ohne diese Werte wird BITTTS_WORKER_TOKEN wiederverwendet. Das funktioniert nur,
+    wenn der Koordinator denselben Token für mehrere Worker erlaubt.
+
+Achtung:
+  Mehrere Trainingsjobs auf einer einzelnen GPU können CUDA-OOM auslösen. Für echte
+  Parallelität brauchst du mehrere GPUs oder Jobs, die nicht gleichzeitig trainieren.
+USAGE
+}
+
+WORKER_COUNT=1
+WORKER_ARGS=()
+if [[ $# -gt 0 ]]; then
+  case "${1:-}" in
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    --count)
+      WORKER_COUNT="${2:?--count braucht eine Zahl}"
+      shift 2
+      ;;
+    --)
+      shift
+      ;;
+    '' )
+      ;;
+    * )
+      if [[ "$1" =~ ^[0-9]+$ ]]; then
+        WORKER_COUNT="$1"
+        shift
+      fi
+      ;;
+  esac
+fi
+if [[ $# -gt 0 ]]; then
+  if [[ "${1:-}" == "--" ]]; then
+    shift
+  fi
+  WORKER_ARGS=("$@")
+fi
+
+if ! [[ "$WORKER_COUNT" =~ ^[0-9]+$ ]] || (( WORKER_COUNT < 1 || WORKER_COUNT > 64 )); then
+  echo "FEHLER: Worker-Anzahl muss zwischen 1 und 64 liegen." >&2
+  exit 2
+fi
+
 load_worker_env() {
   set -a
   # shellcheck disable=SC1090
@@ -117,9 +179,66 @@ PY
 
 mkdir -p "$BITTTS_WORKER_RUNTIME" "$BITTTS_WORKER_DATASET"
 
-echo "Worker startet im Vordergrund."
-echo "Name:        ${BITTTS_WORKER_NAME:-$(hostname)}"
+base_worker_name="${BITTTS_WORKER_NAME:-$(hostname)}"
+base_worker_id="${BITTTS_WORKER_ID:-}"
+
+if (( WORKER_COUNT == 1 )); then
+  echo "Worker startet im Vordergrund."
+  echo "Name:        $base_worker_name"
+  echo "Coordinator: ${BITTTS_COORDINATOR_URL:-?}"
+  echo "Cache:       $BITTTS_WORKER_DATASET"
+  exec "$VENV_DIR/bin/bkg-bittts-worker" "${WORKER_ARGS[@]}"
+fi
+
+multi_dir="$BITTTS_WORKER_RUNTIME/multi-worker"
+mkdir -p "$multi_dir"
+
+printf 'Starte %s Worker im Hintergrund. Weil ein Prozess offenbar zu wenig Chaos war.\n' "$WORKER_COUNT"
+echo "Name-Basis:   $base_worker_name"
 echo "Coordinator: ${BITTTS_COORDINATOR_URL:-?}"
 echo "Cache:       $BITTTS_WORKER_DATASET"
+echo "Logs:        $multi_dir"
 
-exec "$VENV_DIR/bin/bkg-bittts-worker" "$@"
+for slot in $(seq 1 "$WORKER_COUNT"); do
+  token_var="BITTTS_WORKER_TOKEN_${slot}"
+  slot_token="${!token_var:-${BITTTS_WORKER_TOKEN:-}}"
+  if [[ -z "$slot_token" ]]; then
+    echo "FEHLER: Kein Token für Worker $slot gefunden ($token_var oder BITTTS_WORKER_TOKEN)." >&2
+    exit 1
+  fi
+
+  export BITTTS_WORKER_SLOT="$slot"
+  export BITTTS_WORKER_TOKEN="$slot_token"
+  export BITTTS_WORKER_NAME="${base_worker_name}-${slot}"
+  if [[ -n "$base_worker_id" ]]; then
+    export BITTTS_WORKER_ID="${base_worker_id}-${slot}"
+  else
+    export BITTTS_WORKER_ID="$(hostname)-${slot}"
+  fi
+
+  log_file="$multi_dir/worker-${slot}.log"
+  pid_file="$multi_dir/worker-${slot}.pid"
+
+  (
+    echo "[$(date -Is)] Starte Worker $slot"
+    echo "Name: $BITTTS_WORKER_NAME"
+    echo "ID:   $BITTTS_WORKER_ID"
+    exec "$VENV_DIR/bin/bkg-bittts-worker" "${WORKER_ARGS[@]}"
+  ) >"$log_file" 2>&1 &
+  pid="$!"
+  printf '%s\n' "$pid" > "$pid_file"
+  echo "Worker $slot gestartet: pid=$pid log=$log_file"
+done
+
+cat <<EOF
+
+Status:
+  ps -fp \$(cat $multi_dir/worker-*.pid)
+
+Logs:
+  tail -f $multi_dir/worker-1.log
+  tail -f $multi_dir/worker-*.log
+
+Stop:
+  kill \$(cat $multi_dir/worker-*.pid)
+EOF
