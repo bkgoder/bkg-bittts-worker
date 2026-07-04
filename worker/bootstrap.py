@@ -72,7 +72,7 @@ def _patch_data_utils(upstream: Path) -> None:
 
     empty_bucket_target = "ids_bucket = ids_bucket + ids_bucket * (rem // len_bucket) + ids_bucket[:(rem % len_bucket)]"
     needs_empty_bucket_guard = "BKG empty bucket guard" not in source
-    needs_german_symbol_normalization = "BKG German symbol normalization" not in source
+    needs_text_normalization = "BKG robust text normalization" not in source
 
     for line in lines:
         if needs_empty_bucket_guard and empty_bucket_target in line:
@@ -86,15 +86,20 @@ def _patch_data_utils(upstream: Path) -> None:
             )
             changed = True
 
-        if needs_german_symbol_normalization and "text_norm = cleaned_text_to_sequence(text)" in line:
+        if needs_text_normalization and "text_norm = cleaned_text_to_sequence(text)" in line:
             indent = line[: len(line) - len(line.lstrip())]
             updated.extend(
                 [
-                    f"{indent}# BKG German symbol normalization: upstream symbol table is ASCII-only.",
+                    f"{indent}# BKG robust text normalization: upstream symbol table is tiny.",
                     f"{indent}text = text.translate(str.maketrans({{",
                     f"{indent}  'ä': 'ae', 'ö': 'oe', 'ü': 'ue', 'ß': 'ss',",
                     f"{indent}  'Ä': 'Ae', 'Ö': 'Oe', 'Ü': 'Ue',",
+                    f"{indent}  '–': ' ', '—': ' ', '-': ' ', '_': ' ',",
+                    f"{indent}  '„': '\"', '“': '\"', '”': '\"', '’': \"'\", '‘': \"'\",",
                     f"{indent}}}))",
+                    f"{indent}allowed = set(__import__('text').symbols.symbols)",
+                    f"{indent}text = ''.join(ch if ch in allowed else ' ' for ch in text)",
+                    f"{indent}text = ' '.join(text.split())",
                 ]
             )
             changed = True
@@ -105,7 +110,7 @@ def _patch_data_utils(upstream: Path) -> None:
         patched = "\n".join(updated) + "\n"
         data_utils.write_text(patched, encoding="utf-8")
         compile(patched, str(data_utils), "exec")
-        print("data_utils.py repariert: leere Buckets und deutsche Umlaute normalisiert.", flush=True)
+        print("data_utils.py repariert: leere Buckets und robuste Textnormalisierung.", flush=True)
 
 
 def _patch_training_configs(root: Path) -> None:
