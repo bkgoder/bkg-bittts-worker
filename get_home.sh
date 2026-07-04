@@ -31,9 +31,11 @@ COUNT=1
 TOKEN=""
 WORKER_NAME="${BITTTS_WORKER_NAME:-paperspace-gpu-01}"
 COORDINATOR="${BITTTS_COORDINATOR_URL:-https://train.eysho.info}"
-POLL_SECONDS="${BITTTS_JOIN_POLL_SECONDS:-3}"
+POLL_SECONDS="${BITTTS_JOIN_POLL_SECONDS:-10}"
 JOIN_TIMEOUT_SECONDS="${BITTTS_JOIN_TIMEOUT_SECONDS:-1800}"
-JOIN_USER_AGENT="${BITTTS_JOIN_USER_AGENT:-bkg-bittts-worker/1.0 curl-compatible}"
+JOIN_USER_AGENT="${BITTTS_JOIN_USER_AGENT:-curl/8.5.0}"
+EDGE_RETRY_SECONDS="${BITTTS_JOIN_EDGE_RETRY_SECONDS:-15}"
+EDGE_RETRY_LIMIT="${BITTTS_JOIN_EDGE_RETRY_LIMIT:-40}"
 
 if [[ $# -gt 0 ]]; then
   case "${1:-}" in
@@ -110,7 +112,7 @@ PY
 
 join_and_wait_for_token() {
   local name="$1"
-  python3 - "$COORDINATOR" "$name" "$POLL_SECONDS" "$JOIN_TIMEOUT_SECONDS" "$JOIN_USER_AGENT" <<'PY'
+  python3 - "$COORDINATOR" "$name" "$POLL_SECONDS" "$JOIN_TIMEOUT_SECONDS" "$JOIN_USER_AGENT" "$EDGE_RETRY_SECONDS" "$EDGE_RETRY_LIMIT" <<'PY'
 from __future__ import annotations
 
 import json
@@ -124,6 +126,8 @@ name = sys.argv[2]
 poll_seconds = max(1, int(sys.argv[3]))
 timeout_seconds = max(30, int(sys.argv[4]))
 user_agent = sys.argv[5]
+edge_retry_seconds = max(1, int(sys.argv[6]))
+edge_retry_limit = max(1, int(sys.argv[7]))
 
 def request_json(method: str, path: str, payload: dict | None = None) -> dict:
     data = None if payload is None else json.dumps(payload).encode('utf-8')
@@ -132,7 +136,9 @@ def request_json(method: str, path: str, payload: dict | None = None) -> dict:
         data=data,
         headers={
             'Accept': 'application/json',
+            'Cache-Control': 'no-cache',
             'Content-Type': 'application/json',
+            'Pragma': 'no-cache',
             'User-Agent': user_agent,
         },
         method=method,
@@ -144,12 +150,7 @@ def request_json(method: str, path: str, payload: dict | None = None) -> dict:
     except urllib.error.HTTPError as error:
         detail = error.read().decode('utf-8', errors='replace')
         if error.code == 403 and 'error code: 1010' in detail.lower():
-            raise SystemExit(
-                'JOIN_BLOCKED_BY_EDGE\n'
-                f'{method} {path}\n'
-                f'HTTP {error.code}: {detail}\n'
-                'Cloudflare/Edge blockt diese Anfrage. Teste mit curl; falls curl geht, User-Agent/Firewall-Regel prüfen.'
-            )
+            return {'_edge_blocked': True, '_method': method, '_path': path, '_detail': detail}
         if error.code in {403, 404, 405}:
             raise SystemExit(
                 'JOIN_ENDPOINT_FAILED\n'
@@ -162,6 +163,13 @@ def request_json(method: str, path: str, payload: dict | None = None) -> dict:
         raise SystemExit(f'Join-Anfrage fehlgeschlagen bei {method} {path}: {error}')
 
 created = request_json('POST', '/api/worker/join-requests', {'name': name})
+if created.get('_edge_blocked'):
+    raise SystemExit(
+        'JOIN_BLOCKED_BY_EDGE\n'
+        'POST /api/worker/join-requests\n'
+        f"{created.get('_detail')}\n"
+        'Cloudflare/Edge blockt schon die Request-Erstellung. Proxy/WAF-Regel für /api/worker/join-requests prüfen.'
+    )
 request_id = str(created.get('id') or '').strip()
 if not request_id:
     raise SystemExit('Koordinator hat keine Join-Request-ID zurückgegeben.')
@@ -169,9 +177,27 @@ if not request_id:
 print(f'Join Request erstellt: {name} ({request_id})', file=sys.stderr, flush=True)
 print('Im Trainer-UI jetzt Approve klicken. Ja, ein Button, endlich Zivilisation.', file=sys.stderr, flush=True)
 
+edge_blocks = 0
 deadline = time.monotonic() + timeout_seconds
 while time.monotonic() < deadline:
     current = request_json('GET', f'/api/worker/join-requests/{request_id}')
+    if current.get('_edge_blocked'):
+        edge_blocks += 1
+        if edge_blocks > edge_retry_limit:
+            raise SystemExit(
+                'JOIN_BLOCKED_BY_EDGE\n'
+                f"GET /api/worker/join-requests/{request_id}\n"
+                f"{current.get('_detail')}\n"
+                f'Edge blockt Polling dauerhaft nach {edge_blocks} Versuchen.'
+            )
+        print(
+            f'Edge blockt Polling kurz ({edge_blocks}/{edge_retry_limit}); warte {edge_retry_seconds}s und versuche weiter.',
+            file=sys.stderr,
+            flush=True,
+        )
+        time.sleep(edge_retry_seconds)
+        continue
+    edge_blocks = 0
     status = str(current.get('status') or '').strip()
     token = str(current.get('token') or '').strip()
     if token:
