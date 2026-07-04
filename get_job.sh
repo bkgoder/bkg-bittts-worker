@@ -27,22 +27,16 @@ Nutzung:
 Mehrere Worker:
   - Jeder Worker bekommt automatisch einen eindeutigen Namen und eine stabile Worker-ID.
   - Die stabile Default-ID basiert auf BITTTS_WORKER_NAME, nicht auf dem Container-Hostname.
-    Paperspace würfelt Hostnames sonst neu und der Koordinator denkt, der Token gehört
-    plötzlich einem anderen Worker. Sehr hilfreich, wenn man Feuer mag.
-  - Jeder Worker bekommt einen eigenen MASTER_PORT, damit Torch Distributed nicht auf
-    demselben Port explodiert.
+  - Jeder Worker bekommt einen eigenen MASTER_PORT und BITTTS_MASTER_PORT.
   - Logs landen unter runtime/multi-worker/worker-N.log.
   - PIDs landen unter runtime/multi-worker/worker-N.pid.
   - Bei Managed Worker Tokens braucht jeder Slot einen eigenen Token:
       BITTTS_WORKER_TOKEN_1=...
       BITTTS_WORKER_TOKEN_2=...
       BITTTS_WORKER_TOKEN_3=...
-  - BITTTS_WORKER_TOKEN wird im Multi-Worker-Modus absichtlich NICHT wiederverwendet,
-    weil der Koordinator Managed Tokens genau einem Worker zuordnet.
 
 Achtung:
-  Mehrere Trainingsjobs auf einer einzelnen GPU können CUDA-OOM auslösen. Für echte
-  Parallelität brauchst du mehrere GPUs oder Jobs, die nicht gleichzeitig trainieren.
+  Mehrere Trainingsjobs auf einer einzelnen GPU können CUDA-OOM auslösen.
 USAGE
 }
 
@@ -132,9 +126,7 @@ if [[ ! -x "$VENV_DIR/bin/python" ]]; then
   python3 -m venv --system-site-packages "$VENV_DIR"
 fi
 
-# Paperspace läuft im Notebook-Container als root. Die Venv bleibt trotzdem lokal im Repo.
 export PIP_ROOT_USER_ACTION=ignore
-
 # shellcheck disable=SC1091
 source "$VENV_DIR/bin/activate"
 
@@ -214,6 +206,7 @@ if (( WORKER_COUNT == 1 )); then
   export BITTTS_WORKER_ID="$base_worker_id"
   export MASTER_ADDR="${MASTER_ADDR:-127.0.0.1}"
   export MASTER_PORT="$base_master_port"
+  export BITTTS_MASTER_PORT="$MASTER_PORT"
   echo "Worker startet im Vordergrund."
   echo "Name:        $base_worker_name"
   echo "ID:          $BITTTS_WORKER_ID"
@@ -234,12 +227,11 @@ for slot in $(seq 1 "$WORKER_COUNT"); do
     echo "FEHLER: $token_var fehlt." >&2
     echo "Multi-Worker mit Managed Tokens braucht pro Worker einen eigenen Token." >&2
     echo "Führe aus: ./get_home.sh --count $WORKER_COUNT $base_worker_name ${BITTTS_COORDINATOR_URL:-https://train.eysho.info}" >&2
-    echo "Oder warte auf den UI-Approve-Join-Flow aus bkg-bittts-trainer#2." >&2
     exit 1
   fi
   if [[ -n "${seen_tokens[$slot_token]:-}" ]]; then
     echo "FEHLER: $token_var ist identisch mit BITTTS_WORKER_TOKEN_${seen_tokens[$slot_token]}." >&2
-    echo "Managed Tokens dürfen nicht mehrfach verwendet werden. Sonst kommt exakt: Token gehört bereits zu einem anderen Worker." >&2
+    echo "Managed Tokens dürfen nicht mehrfach verwendet werden." >&2
     exit 1
   fi
   seen_tokens[$slot_token]="$slot"
@@ -280,11 +272,13 @@ for slot in $(seq 1 "$WORKER_COUNT"); do
     export BITTTS_WORKER_ID="${base_worker_id}-${slot}"
     export MASTER_ADDR="${MASTER_ADDR:-127.0.0.1}"
     export MASTER_PORT="$slot_master_port"
+    export BITTTS_MASTER_PORT="$slot_master_port"
 
     echo "[$(date -Is)] Starte Worker $slot"
-    echo "Name:   $BITTTS_WORKER_NAME"
-    echo "ID:     $BITTTS_WORKER_ID"
-    echo "MASTER: $MASTER_ADDR:$MASTER_PORT"
+    echo "Name:          $BITTTS_WORKER_NAME"
+    echo "ID:            $BITTTS_WORKER_ID"
+    echo "MASTER:        $MASTER_ADDR:$MASTER_PORT"
+    echo "BITTTS_MASTER: $BITTTS_MASTER_PORT"
     exec "$VENV_DIR/bin/bkg-bittts-worker" "${WORKER_ARGS[@]}"
   ) >"$log_file" 2>&1 &
   pid="$!"
