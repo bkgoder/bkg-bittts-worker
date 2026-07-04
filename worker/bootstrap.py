@@ -97,7 +97,7 @@ def _patch_data_utils(upstream: Path) -> None:
                     f"{indent}  '–': ' ', '—': ' ', '-': ' ', '_': ' ',",
                     f"{indent}  '„': '\"', '“': '\"', '”': '\"', '’': \"'\", '‘': \"'\",",
                     f"{indent}}}))",
-                    f"{indent}allowed = set(__import__('text').symbols.symbols)",
+                    f"{indent}allowed = set(__import__('text').symbols)",
                     f"{indent}text = ''.join(ch if ch in allowed else ' ' for ch in text)",
                     f"{indent}text = ' '.join(text.split())",
                 ]
