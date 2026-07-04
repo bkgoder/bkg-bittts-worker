@@ -1,5 +1,27 @@
 from __future__ import annotations
 
+import os
+
+
+def _apply_master_port_override() -> None:
+    """Force worker slot port before torch.distributed initializes.
+
+    Some bundled shell scripts still assign MASTER_PORT=65520 internally.
+    In multi-worker mode every training process then fights for the same local
+    c10d TCPStore port. get_job.sh exports BITTTS_MASTER_PORT per worker slot,
+    so we re-apply it here at Python startup, before train_latest.py calls
+    dist.init_process_group(env://).
+    """
+
+    desired = os.environ.get("BITTTS_MASTER_PORT", "").strip()
+    if not desired or not desired.isdigit():
+        return
+    os.environ["MASTER_PORT"] = desired
+    os.environ.setdefault("MASTER_ADDR", "127.0.0.1")
+
+
+_apply_master_port_override()
+
 try:
     import torch
 except Exception:  # pragma: no cover - only active inside training runtime
