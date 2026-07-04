@@ -139,13 +139,14 @@ def request_json(method: str, path: str, payload: dict | None = None) -> dict:
         detail = error.read().decode('utf-8', errors='replace')
         if error.code in {403, 404, 405}:
             raise SystemExit(
-                'JOIN_ENDPOINT_MISSING\n'
+                'JOIN_ENDPOINT_FAILED\n'
+                f'{method} {path}\n'
                 f'HTTP {error.code}: {detail}\n'
-                'Der Trainer braucht bkg-bittts-trainer#2: Worker Join Requests mit UI-Approve Flow.'
+                'POST kann bereits funktionieren, aber GET-Poll/Approve kann noch fehlen oder blockiert sein.'
             )
-        raise SystemExit(f'Join-Anfrage abgelehnt: HTTP {error.code}: {detail}')
+        raise SystemExit(f'Join-Anfrage abgelehnt bei {method} {path}: HTTP {error.code}: {detail}')
     except Exception as error:
-        raise SystemExit(f'Join-Anfrage fehlgeschlagen: {error}')
+        raise SystemExit(f'Join-Anfrage fehlgeschlagen bei {method} {path}: {error}')
 
 created = request_json('POST', '/api/worker/join-requests', {'name': name})
 request_id = str(created.get('id') or '').strip()
