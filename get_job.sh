@@ -17,13 +17,17 @@ CALLER_BITTTS_BUNDLE_FORCE="${BITTTS_BUNDLE_FORCE-}"
 usage() {
   cat <<'USAGE'
 Nutzung:
-  ./get_job.sh              # einen Worker im Vordergrund starten
-  ./get_job.sh 3            # drei Worker im Hintergrund starten
-  ./get_job.sh --count 3    # dasselbe, nur weniger kryptisch
-  ./get_job.sh 3 -- --once  # drei Worker starten, je nur einen Job
+  ./get_job.sh                         # einen Worker im Vordergrund starten
+  ./get_job.sh 3                       # drei Worker im Hintergrund starten
+  ./get_job.sh --count 3               # dasselbe, nur weniger kryptisch
+  ./get_job.sh 3 --foreground          # drei Worker starten und Logs live anzeigen
+  ./get_job.sh 3 --follow              # Alias für --foreground
+  ./get_job.sh 3 -- --once             # drei Worker starten, je nur einen Job
 
 Mehrere Worker:
   - Jeder Worker bekommt automatisch einen eindeutigen Namen und eine Worker-ID.
+  - Jeder Worker bekommt einen eigenen MASTER_PORT, damit Torch Distributed nicht auf
+    demselben Port explodiert wie ein schlecht geplanter Grillabend.
   - Logs landen unter runtime/multi-worker/worker-N.log.
   - PIDs landen unter runtime/multi-worker/worker-N.pid.
   - Bei Managed Worker Tokens braucht jeder Slot einen eigenen Token:
@@ -41,6 +45,7 @@ USAGE
 
 WORKER_COUNT=1
 WORKER_ARGS=()
+FOLLOW_LOGS=0
 if [[ $# -gt 0 ]]; then
   case "${1:-}" in
     -h|--help)
@@ -50,6 +55,10 @@ if [[ $# -gt 0 ]]; then
     --count)
       WORKER_COUNT="${2:?--count braucht eine Zahl}"
       shift 2
+      ;;
+    --foreground|--follow)
+      FOLLOW_LOGS=1
+      shift
       ;;
     --)
       shift
@@ -64,12 +73,23 @@ if [[ $# -gt 0 ]]; then
       ;;
   esac
 fi
-if [[ $# -gt 0 ]]; then
-  if [[ "${1:-}" == "--" ]]; then
-    shift
-  fi
-  WORKER_ARGS=("$@")
-fi
+while [[ $# -gt 0 ]]; do
+  case "${1:-}" in
+    --foreground|--follow)
+      FOLLOW_LOGS=1
+      shift
+      ;;
+    --)
+      shift
+      WORKER_ARGS=("$@")
+      break
+      ;;
+    *)
+      WORKER_ARGS+=("$1")
+      shift
+      ;;
+  esac
+done
 
 if ! [[ "$WORKER_COUNT" =~ ^[0-9]+$ ]] || (( WORKER_COUNT < 1 || WORKER_COUNT > 64 )); then
   echo "FEHLER: Worker-Anzahl muss zwischen 1 und 64 liegen." >&2
@@ -181,12 +201,20 @@ mkdir -p "$BITTTS_WORKER_RUNTIME" "$BITTTS_WORKER_DATASET"
 
 base_worker_name="${BITTTS_WORKER_NAME:-$(hostname)}"
 base_worker_id="${BITTTS_WORKER_ID:-}"
+base_master_port="${MASTER_PORT:-65520}"
+if ! [[ "$base_master_port" =~ ^[0-9]+$ ]]; then
+  echo "FEHLER: MASTER_PORT muss eine Zahl sein." >&2
+  exit 2
+fi
 
 if (( WORKER_COUNT == 1 )); then
+  export MASTER_ADDR="${MASTER_ADDR:-127.0.0.1}"
+  export MASTER_PORT="$base_master_port"
   echo "Worker startet im Vordergrund."
   echo "Name:        $base_worker_name"
   echo "Coordinator: ${BITTTS_COORDINATOR_URL:-?}"
   echo "Cache:       $BITTTS_WORKER_DATASET"
+  echo "MASTER:      $MASTER_ADDR:$MASTER_PORT"
   exec "$VENV_DIR/bin/bkg-bittts-worker" "${WORKER_ARGS[@]}"
 fi
 
@@ -212,37 +240,55 @@ for slot in $(seq 1 "$WORKER_COUNT"); do
   seen_tokens[$slot_token]="$slot"
 done
 
-printf 'Starte %s Worker im Hintergrund. Weil ein Prozess offenbar zu wenig Chaos war.\n' "$WORKER_COUNT"
+printf 'Starte %s Worker. Mehrere Prozesse, weil ein einzelner offenbar zu zivilisiert war.\n' "$WORKER_COUNT"
 echo "Name-Basis:   $base_worker_name"
 echo "Coordinator: ${BITTTS_COORDINATOR_URL:-?}"
 echo "Cache:       $BITTTS_WORKER_DATASET"
 echo "Logs:        $multi_dir"
+echo "Live-Logs:   $FOLLOW_LOGS"
+
+pids=()
+cleanup() {
+  if (( ${#pids[@]} > 0 )); then
+    echo
+    echo "Stoppe Worker: ${pids[*]}"
+    kill "${pids[@]}" 2>/dev/null || true
+  fi
+}
+if (( FOLLOW_LOGS == 1 )); then
+  trap cleanup INT TERM EXIT
+fi
 
 for slot in $(seq 1 "$WORKER_COUNT"); do
   token_var="BITTTS_WORKER_TOKEN_${slot}"
   slot_token="${!token_var}"
-
-  export BITTTS_WORKER_SLOT="$slot"
-  export BITTTS_WORKER_TOKEN="$slot_token"
-  export BITTTS_WORKER_NAME="${base_worker_name}-${slot}"
-  if [[ -n "$base_worker_id" ]]; then
-    export BITTTS_WORKER_ID="${base_worker_id}-${slot}"
-  else
-    export BITTTS_WORKER_ID="$(hostname)-${slot}"
-  fi
+  slot_master_port=$((base_master_port + slot))
 
   log_file="$multi_dir/worker-${slot}.log"
   pid_file="$multi_dir/worker-${slot}.pid"
 
   (
+    export BITTTS_WORKER_SLOT="$slot"
+    export BITTTS_WORKER_TOKEN="$slot_token"
+    export BITTTS_WORKER_NAME="${base_worker_name}-${slot}"
+    if [[ -n "$base_worker_id" ]]; then
+      export BITTTS_WORKER_ID="${base_worker_id}-${slot}"
+    else
+      export BITTTS_WORKER_ID="$(hostname)-${slot}"
+    fi
+    export MASTER_ADDR="${MASTER_ADDR:-127.0.0.1}"
+    export MASTER_PORT="$slot_master_port"
+
     echo "[$(date -Is)] Starte Worker $slot"
-    echo "Name: $BITTTS_WORKER_NAME"
-    echo "ID:   $BITTTS_WORKER_ID"
+    echo "Name:   $BITTTS_WORKER_NAME"
+    echo "ID:     $BITTTS_WORKER_ID"
+    echo "MASTER: $MASTER_ADDR:$MASTER_PORT"
     exec "$VENV_DIR/bin/bkg-bittts-worker" "${WORKER_ARGS[@]}"
   ) >"$log_file" 2>&1 &
   pid="$!"
+  pids+=("$pid")
   printf '%s\n' "$pid" > "$pid_file"
-  echo "Worker $slot gestartet: pid=$pid log=$log_file"
+  echo "Worker $slot gestartet: pid=$pid master_port=$slot_master_port log=$log_file"
 done
 
 cat <<EOF
@@ -257,3 +303,25 @@ Logs:
 Stop:
   kill \$(cat $multi_dir/worker-*.pid)
 EOF
+
+if (( FOLLOW_LOGS == 1 )); then
+  echo
+  echo "Live-Modus aktiv. Strg+C stoppt alle gestarteten Worker. Mensch gegen Prozessbaum, Klassiker."
+  tail -n +1 -f "$multi_dir"/worker-*.log &
+  tail_pid="$!"
+  while true; do
+    alive=0
+    for pid in "${pids[@]}"; do
+      if kill -0 "$pid" 2>/dev/null; then
+        alive=1
+      fi
+    done
+    if (( alive == 0 )); then
+      kill "$tail_pid" 2>/dev/null || true
+      wait "$tail_pid" 2>/dev/null || true
+      trap - INT TERM EXIT
+      exit 0
+    fi
+    sleep 2
+  done
+fi
